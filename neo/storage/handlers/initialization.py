@@ -26,25 +26,11 @@ class InitializationHandler(BaseMasterHandler):
         pt.load(ptid, row_list, app.nm)
         if not pt.filled():
             raise ProtocolError('Partial partition table received')
-        # Install the partition table into the database for persistence.
-        cell_list = []
-        offset_list = xrange(pt.getPartitions())
-        unassigned_set = set(offset_list)
-        for offset in offset_list:
-            for cell in pt.getCellList(offset):
-                cell_list.append((offset, cell.getUUID(), cell.getState()))
-                if cell.getUUID() == app.uuid:
-                    unassigned_set.remove(offset)
-        # delete objects database
+        cell_list = [(offset, cell.getUUID(), cell.getState())
+            for offset in xrange(pt.getPartitions())
+            for cell in pt.getCellList(offset)]
         dm = app.dm
-        if unassigned_set:
-          if app.disable_drop_partitions:
-            logging.info("don't drop data for partitions %r", unassigned_set)
-          else:
-            logging.debug('drop data for partitions %r', unassigned_set)
-            dm.dropPartitions(unassigned_set)
-
-        dm.changePartitionTable(ptid, cell_list, reset=True)
+        dm.changePartitionTable(app, ptid, cell_list, reset=True)
         dm.commit()
 
     def truncate(self, conn, tid):

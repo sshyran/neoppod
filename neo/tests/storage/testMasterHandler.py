@@ -90,7 +90,7 @@ class StorageMasterHandlerTests(NeoUnitTestBase):
         # dm call
         calls = self.app.dm.mockGetNamedCalls('changePartitionTable')
         self.assertEqual(len(calls), 1)
-        calls[0].checkArgs(ptid, cells)
+        calls[0].checkArgs(app, ptid, cells)
 
 if __name__ == "__main__":
     unittest.main()

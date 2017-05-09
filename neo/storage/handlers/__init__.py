@@ -71,7 +71,7 @@ class BaseMasterHandler(BaseHandler):
         if ptid != 1 + app.pt.getID():
             raise ProtocolError('wrong partition table id')
         app.pt.update(ptid, cell_list, app.nm)
-        app.dm.changePartitionTable(ptid, cell_list)
+        app.dm.changePartitionTable(app, ptid, cell_list)
         if app.operational:
             app.replicator.notifyPartitionChanges(cell_list)
         app.dm.commit()

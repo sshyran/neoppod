@@ -282,7 +282,7 @@ class ImporterDatabaseManager(DatabaseManager):
     def __init__(self, *args, **kw):
         super(ImporterDatabaseManager, self).__init__(*args, **kw)
         implements(self, """_getNextTID checkSerialRange checkTIDRange
-            deleteObject deleteTransaction dropPartitions getLastTID
+            deleteObject deleteTransaction _dropPartition getLastTID
             getReplicationObjectList _getTIDList nonempty""".split())
 
     _getPartition = property(lambda self: self.db._getPartition)

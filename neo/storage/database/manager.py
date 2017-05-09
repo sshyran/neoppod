@@ -18,6 +18,7 @@ import os, errno, socket, struct, sys, threading
 from collections import defaultdict
 from contextlib import contextmanager
 from functools import wraps
+from time import time
 from neo.lib import logging, util
 from neo.lib.exception import DatabaseFailure
 from neo.lib.interfaces import abstract, requires
@@ -60,6 +61,8 @@ class DatabaseManager(object):
     LOCKED = "error: database is locked"
 
     _deferred = 0
+    _drop_stats = 0, 0
+    _dropping = None
     _duplicating = _repairing = None
 
     def __init__(self, database, engine=None, wait=None):
@@ -168,7 +171,8 @@ class DatabaseManager(object):
         return version
 
     def doOperation(self, app):
-        pass
+        if self._dropping:
+            self._dropPartitions(app)
 
     def _close(self):
         """Backend-specific code to close the database"""
@@ -453,11 +457,13 @@ class DatabaseManager(object):
         """
 
     @requires(_changePartitionTable)
-    def changePartitionTable(self, ptid, cell_list, reset=False):
+    def changePartitionTable(self, app, ptid, cell_list, reset=False):
+        dropping = self._dropping or set()
         readable_set = self._readable_set
         if reset:
             readable_set.clear()
             np = self.getNumPartitions()
+            dropping.update(xrange(np))
             def _getPartition(x, np=np):
                 return x % np
             def _getReadablePartition(x, np=np, r=readable_set):
@@ -470,6 +476,10 @@ class DatabaseManager(object):
         me = self.getUUID()
         for offset, nid, state in cell_list:
             if nid == me:
+                if state == CellStates.DISCARDED:
+                    dropping.add(offset)
+                else:
+                    dropping.discard(offset)
                 if CellStates.UP_TO_DATE != state != CellStates.FEEDING:
                     readable_set.discard(offset)
                 else:
@@ -477,10 +487,57 @@ class DatabaseManager(object):
         self._changePartitionTable(cell_list, reset)
         assert isinstance(ptid, (int, long)), ptid
         self._setConfiguration('ptid', str(ptid))
+        if dropping and not self._dropping:
+            self._dropping = dropping
+            if app.operational:
+                self._dropPartitions(app)
+
+    def _dropPartitions(self, app):
+        if app.disable_drop_partitions:
+            logging.info("don't drop data for partitions %r", self._dropping)
+            return
+        def dropPartitions():
+            dropping = self._dropping
+            before = drop_count, drop_time = self._drop_stats
+            dropped = 0
+            while dropping:
+                offset = next(iter(dropping))
+                log = dropped
+                while True:
+                    yield 1
+                    if offset not in dropping:
+                        break
+                    start = time()
+                    data_id_list = self._dropPartition(offset,
+                        # The efficiency drops when the number of lines to
+                        # delete is too small so do not delete too few.
+                        max(100, int(.1 * drop_count / drop_time))
+                        if drop_time else 1000)
+                    if data_id_list is None:
+                        dropping.remove(offset)
+                        break
+                    if log == dropped:
+                        dropped += 1
+                        logging.info("dropping partition %s...", offset)
+                    drop_count += self._pruneData(data_id_list)
+                    drop_time += time() - start
+                    self.commit()
+                    self._drop_stats = drop_count, drop_time
+            if dropped:
+                logging.info("%s partition(s) dropped"
+                    " (stats: count: %s/%s, time: %.4s/%.4s)",
+                    dropped, drop_count - before[0], drop_count,
+                    round(drop_time - before[1], 3), round(drop_time, 3))
+        app.newTask(dropPartitions())
 
     @abstract
-    def dropPartitions(self, offset_list):
-        """Delete all data for specified partitions"""
+    def _dropPartition(self, offset, count):
+        """Delete rows for given partition
+
+        Delete at most 'count' rows of from obj:
+        - if there's no line to delete, purge trans and return None
+        - else return data ids of deleted rows
+        """
 
     def _getUnfinishedDataIdList(self):
         """Drop any unfinished data from a database."""

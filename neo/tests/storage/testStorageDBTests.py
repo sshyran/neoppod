@@ -15,11 +15,21 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 from binascii import a2b_hex
+from collections import deque
 from contextlib import contextmanager
 import unittest
 from neo.lib.util import add64, p64, u64
 from neo.lib.protocol import CellStates, ZERO_HASH, ZERO_OID, ZERO_TID, MAX_TID
+from neo.storage.app import Application
 from .. import NeoUnitTestBase
+
+
+class DummyApplication(deque):
+
+    newTask = Application.newTask.__func__
+    disable_drop_partitions = False
+    operational = True
+    task_queue = property(lambda self: self)
 
 
 class StorageDBTests(NeoUnitTestBase):
@@ -69,7 +79,7 @@ class StorageDBTests(NeoUnitTestBase):
         uuid = self.getStorageUUID()
         db.setUUID(uuid)
         self.assertEqual(uuid, db.getUUID())
-        db.changePartitionTable(1,
+        db.changePartitionTable(None, 1,
             [(i, uuid, CellStates.UP_TO_DATE) for i in xrange(num_partitions)],
             reset=True)
         db.commit()
@@ -101,15 +111,6 @@ class StorageDBTests(NeoUnitTestBase):
     def test_Name(self):
         db = self.getDB()
         self.checkConfigEntry(db.getName, db.setName, 'TEST_NAME')
-
-    def test_getPartitionTable(self):
-        db = self.getDB()
-        uuid1, uuid2 = self.getStorageUUID(), self.getStorageUUID()
-        cell1 = (0, uuid1, CellStates.OUT_OF_DATE)
-        cell2 = (1, uuid1, CellStates.UP_TO_DATE)
-        db.changePartitionTable(1, [cell1, cell2], 1)
-        result = db.getPartitionTable()
-        self.assertEqual(set(result), {cell1, cell2})
 
     def getOIDs(self, count):
         return map(p64, xrange(count))
@@ -202,7 +203,9 @@ class StorageDBTests(NeoUnitTestBase):
             OBJECT_T1_NEXT)
 
     def test_setPartitionTable(self):
+        app = DummyApplication()
         db = self.getDB()
+        db.setNumPartitions(1)
         ptid = 1
         uuid = self.getStorageUUID()
         cell1 = 0, uuid, CellStates.OUT_OF_DATE
@@ -211,17 +214,20 @@ class StorageDBTests(NeoUnitTestBase):
         # no partition table
         self.assertEqual(list(db.getPartitionTable()), [])
         # set one
-        db.changePartitionTable(ptid, [cell1], 1)
+        db.changePartitionTable(app, ptid, [cell1], 1)
         result = db.getPartitionTable()
         self.assertEqual(list(result), [cell1])
         # then another
-        db.changePartitionTable(ptid, [cell2], 1)
+        db.changePartitionTable(None, ptid, [cell2], 1)
         result = db.getPartitionTable()
         self.assertEqual(list(result), [cell2])
         # drop discarded cells
-        db.changePartitionTable(ptid, [cell2, cell3], 1)
+        db.changePartitionTable(None, ptid, [cell2, cell3], 1)
         result = db.getPartitionTable()
         self.assertEqual(list(result), [])
+        self.assertTrue(db._dropping)
+        task, = app
+        self.assertEqual(list(task), [])
 
     def test_changePartitionTable(self):
         db = self.getDB()
@@ -233,15 +239,15 @@ class StorageDBTests(NeoUnitTestBase):
         # no partition table
         self.assertEqual(list(db.getPartitionTable()), [])
         # set one
-        db.changePartitionTable(ptid, [cell1])
+        db.changePartitionTable(None, ptid, [cell1])
         result = db.getPartitionTable()
         self.assertEqual(list(result), [cell1])
         # add more entries
-        db.changePartitionTable(ptid, [cell2])
+        db.changePartitionTable(None, ptid, [cell2])
         result = db.getPartitionTable()
         self.assertEqual(set(result), {cell1, cell2})
         # drop discarded cells
-        db.changePartitionTable(ptid, [cell2, cell3])
+        db.changePartitionTable(None, ptid, [cell2, cell3])
         result = db.getPartitionTable()
         self.assertEqual(list(result), [cell1])
 
