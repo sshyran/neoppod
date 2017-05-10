@@ -519,9 +519,11 @@ class DatabaseManager(object):
                     if log == dropped:
                         dropped += 1
                         logging.info("dropping partition %s...", offset)
+                    logging.debug('drop: pruneData(%s)', len(data_id_list))
                     drop_count += self._pruneData(data_id_list)
                     drop_time += time() - start
                     self.commit()
+                    logging.debug('drop: committed')
                     self._drop_stats = drop_count, drop_time
             if dropped:
                 logging.info("%s partition(s) dropped"

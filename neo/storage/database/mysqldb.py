@@ -409,10 +409,13 @@ class MySQLDatabaseManager(DatabaseManager):
         q = self.query
         where = " WHERE `partition`=%s ORDER BY tid, oid LIMIT %s" % (
             offset, count)
+        logging.debug("drop: select(%s)", count)
         x = q("SELECT data_id FROM obj USE INDEX(PRIMARY)" + where)
         if x:
+            logging.debug("drop: obj")
             q("DELETE FROM obj" + where)
             return [x for x, in x if x]
+        logging.debug("drop: trans")
         q("DELETE FROM trans WHERE `partition`=%s" % offset)
 
     def _getUnfinishedDataIdList(self):
