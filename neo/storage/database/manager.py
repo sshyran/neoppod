@@ -499,7 +499,7 @@ class DatabaseManager(object):
         def dropPartitions():
             dropping = self._dropping
             before = drop_count, drop_time = self._drop_stats
-            dropped = 0
+            commit = dropped = 0
             while dropping:
                 offset = next(iter(dropping))
                 log = dropped
@@ -508,24 +508,34 @@ class DatabaseManager(object):
                     if offset not in dropping:
                         break
                     start = time()
+                    if 0 < commit < start:
+                        self.commit()
+                        logging.debug('drop: committed')
+                        commit = 0
+                        continue
                     data_id_list = self._dropPartition(offset,
                         # The efficiency drops when the number of lines to
                         # delete is too small so do not delete too few.
                         max(100, int(.1 * drop_count / drop_time))
                         if drop_time else 1000)
-                    if data_id_list is None:
-                        dropping.remove(offset)
-                        break
-                    if log == dropped:
-                        dropped += 1
-                        logging.info("dropping partition %s...", offset)
-                    logging.debug('drop: pruneData(%s)', len(data_id_list))
-                    drop_count += self._pruneData(data_id_list)
-                    drop_time += time() - start
-                    self.commit()
-                    logging.debug('drop: committed')
-                    self._drop_stats = drop_count, drop_time
+                    if data_id_list:
+                        if not commit:
+                            commit = time() + 1
+                        if log == dropped:
+                            dropped += 1
+                            logging.info("dropping partition %s...", offset)
+                        if type(data_id_list) is list:
+                            logging.debug('drop: pruneData(%s)',
+                                          len(data_id_list))
+                            drop_count += self._pruneData(data_id_list)
+                            drop_time += time() - start
+                            self._drop_stats = drop_count, drop_time
+                            continue
+                    dropping.remove(offset)
+                    break
             if dropped:
+                if commit:
+                    self.commit()
                 logging.info("%s partition(s) dropped"
                     " (stats: count: %s/%s, time: %.4s/%.4s)",
                     dropped, drop_count - before[0], drop_count,
@@ -537,7 +547,8 @@ class DatabaseManager(object):
         """Delete rows for given partition
 
         Delete at most 'count' rows of from obj:
-        - if there's no line to delete, purge trans and return None
+        - if there's no line to delete, purge trans and return
+          a boolean indicating if any row was deleted (from trans)
         - else return data ids of deleted rows
         """
 

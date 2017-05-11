@@ -417,6 +417,8 @@ class MySQLDatabaseManager(DatabaseManager):
             return [x for x, in x if x]
         logging.debug("drop: trans")
         q("DELETE FROM trans WHERE `partition`=%s" % offset)
+        (x,), = q('SELECT ROW_COUNT()')
+        return x
 
     def _getUnfinishedDataIdList(self):
         return [x for x, in self.query("SELECT data_id FROM tobj") if x]
